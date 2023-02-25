@@ -1,0 +1,248 @@
+#DMI-LSTM strategy 
+import numpy as np
+import ta
+import pandas as pd
+from keras.utils import np_utils
+import statistics
+
+#Reading the dataset
+dataset = pd.read_csv('/content/drive/My Drive/Thesis/CCL.csv')
+dataset = dataset.dropna()
+dataset = dataset[['Volume','Low','High','Close']]
+obj=ta.trend.ADXIndicator(high=dataset['High'],low=dataset['Low'],close=dataset['Close'],window=14,fillna=False)
+adx=obj.adx()
+pdm=obj.adx_pos()
+ndm=obj.adx_neg()
+dataset['ADX']=adx
+dataset['PDI']=pdm
+dataset['NDI']=ndm
+dataset = dataset.dropna()
+
+c=np.array(dataset['Close'])
+ad=np.array(dataset['ADX'])
+pd=np.array(dataset['PDI'])
+nd=np.array(dataset['NDI'])
+c=c.round(decimals=2)
+ad=ad.round(decimals=2)
+pd=pd.round(decimals=2)
+nd=nd.round(decimals=2)
+
+
+#Trading Simulation
+def TradeSim(action,c):
+  turn=0
+  bamt=0
+  samt=0  
+  profit=0
+  count=0
+  pc=0
+  lc=0
+  amt=5000
+  pul=[5000]
+  ns=0
+  buy,sell,buyx,sellx=list(),list(),list(),list() 
+  #print(len(action))
+  for i in range(0,len(action)-1):
+    if(action[i]=='Buy' and turn==0):         
+      buy.append(c[i+1])
+      buyx.append(i+1)
+      ns=amt/c[i+1]      
+      bamt=c[i+1]*ns     
+      turn=1
+      #print("Bought #Shares:",ns,"\tBough Amount:",amt)           
+    if(action[i]=='Sell' and turn==1):
+      sell.append(c[i+1]) 
+      sellx.append(i+1)    
+      samt=c[i+1]*ns
+      amt=samt
+      #print("Sold #Shares:",ns,"\tSold Amount:",amt)
+      pul.append(amt)    
+      if(samt>bamt):
+        pc=pc+1
+      else:
+        lc=lc+1
+      count=count+1
+      turn=0      
+    profit=amt-5000
+  return profit,count,buy,sell,buyx,sellx,pc,lc,pul
+
+def GenActions():
+  action=list()
+  turn=0
+  i=0
+  while i<len(dataset):
+    if(pd[i]>nd[i] and turn==0):
+      action.append('Buy')
+      action.append('Buy')
+      action.append('Buy')
+      turn=1
+      i=i+3     
+    elif(pd[i]<nd[i] and turn==1):
+      action.append('Sell')
+      action.append('Sell')
+      action.append('Sell')
+      i=i+3
+      turn=0     
+    else:
+      action.append('Hold')
+      i=i+1
+  if(len(action)>len(dataset)):
+    dif=len(action)-len(dataset)
+    for i in range(dif):
+      action.pop()
+  return action
+
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import StandardScaler
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM, GRU
+from keras.layers import Dropout
+import matplotlib.pyplot as plt
+from keras import optimizers
+def CreateModel(ac,nsteps):
+  data=dataset[['PDI','NDI', 'ADX']]
+  data['Action']=ac
+  #print(data)
+  target=data.iloc[:, 3:4]
+  data = data.iloc[:, 0:3]
+
+  encoder = LabelEncoder()
+  encoder.fit(target)
+  ey = encoder.transform(target)
+  dy = np_utils.to_categorical(ey)
+
+  split = int(len(data)*0.8)
+  train, test = data[:split], data[split:]
+  ctrain,ctest= c[:split], c[split:]
+  split = int(len(test)*0.5)
+  validate,test=test[:split], test[split:]
+  cval,ctest=ctest[:split], ctest[split:]
+
+  split = int(len(dy)*0.8)
+  tatrain, tatest = dy[:split], dy[split:]
+  split = int(len(tatest)*0.5)
+  tavalidate,tatest=tatest[:split], tatest[split:]
+
+  #Feature Scaling
+  trainsc = StandardScaler()
+  testsc = StandardScaler()
+  valsc = StandardScaler()
+
+  train=train.values
+  test=test.values
+  validate=validate.values
+
+  train=trainsc.fit_transform(train)
+  test = testsc.fit_transform(test)
+  validate = valsc.fit_transform(validate)
+
+  train=np.concatenate((train,tatrain),axis=1)
+  validate=np.concatenate((validate,tavalidate),axis=1)
+  test=np.concatenate((test, tatest),axis=1)
+
+  end=0
+  xtrain, ytrain = list(), list()
+  for i in range(len(train)-1):
+      # find the end of this pattern
+      end = i + nsteps
+      # check if we are beyond the dataset
+      if end > len(train)-1:
+        break
+      # gather input and output parts of the pattern
+      seqx, seqy = train[i:end, 0:3], train[end, 3:6]
+      xtrain.append(seqx)
+      ytrain.append(seqy)
+  xtrn=np.array(xtrain)
+  ytrn=np.array(ytrain)
+
+  end=0
+  xval, yval = list(), list()
+  for i in range(len(validate)-1):
+      # find the end of this pattern
+      end = i + nsteps
+      # check if we are beyond the dataset
+      if end > len(validate)-1:
+        break
+      # gather input and output parts of the pattern
+      seqx, seqy = validate[i:end, 0:3], validate[end, 3:6]
+      xval.append(seqx)
+      yval.append(seqy)
+  xval=np.array(xval)
+  yval=np.array(yval)
+
+  end=0
+  xtest, ytest = list(), list()
+  for i in range(len(test)-1):
+      # find the end of this pattern
+      end = i + nsteps
+      # check if we are beyond the dataset
+      if end > len(test)-1:
+        break
+      # gather input and output parts of the pattern
+      seqx, seqy = test[i:end, 0:3], test[end, 3:6]
+      xtest.append(seqx)
+      ytest.append(seqy)
+  xtst=np.array(xtest)
+  ytst=np.array(ytest)
+
+  nfeatures = xtrn.shape[2]
+  EP=20
+  grumodel = Sequential()
+  grumodel.add(LSTM(units = 128, return_sequences = True, activation="relu", input_shape = (nsteps, nfeatures)))
+  grumodel.add(LSTM(units = 128,activation="relu"))
+  grumodel.add(Dense(units = 3, activation='softmax'))
+  grumodel.compile(optimizer = 'adam', loss = 'categorical_crossentropy',  metrics = ['accuracy'])
+  gruhist=grumodel.fit(x=xtrn, y=ytrn, batch_size = 32, epochs = EP, verbose=False, validation_data=(xval,yval))
+  gyhat=np.argmax(grumodel.predict(xtst), axis=-1)
+  yhat1=gyhat.ravel()
+
+  a=list()
+  for i in range(len(ytst)):
+    d=np.argmax(ytst[i])
+    a.append(d)
+  a=np.array(a)
+
+  al=encoder.inverse_transform(a)
+  pl=encoder.inverse_transform(yhat1)
+  data.drop(data.columns[[-1]],axis=1,inplace=True)  
+  return pl, ctest
+
+nsteps=15
+for j in range(7):
+  tp=tt=tlt=tpt=tsd=0
+  for i in range(10):
+    p=list()
+    action=GenActions()      
+    act=np.array(action)
+    pred, ct=CreateModel(act,nsteps)
+    profit,count,b,s,bx,sx,pc,lc,pul=TradeSim(pred,ct)
+    tp=tp+profit
+    tt=tt+count
+    tpt=tpt+pc
+    tlt=tlt+lc  
+    gl=[]
+    for i in range(len(pul)-1):
+      x=(pul[i+1]-pul[i])/pul[i]*100
+      gl.append(x)
+    if(len(gl)>1):
+      sd=statistics.stdev(gl)
+      tsd=tsd+sd
+
+  profit=tp/10
+  count=tt/10
+  pc=tpt/10
+  lc=tlt/10
+  sd=tsd/10
+  pp=profit/5000*100 
+  print("Look Back:",nsteps)
+  nsteps=nsteps+2
+  print("Gross Profit Percentage:",pp)
+  print("Standard Deviation:",sd)
+  print("Number of Trades:",count)
+  print("#Priftable Trades:",pc)
+  print("#Loss Trades:",lc)
+  print("Gross Profit:",profit)
+
+
+
