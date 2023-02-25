@@ -1,0 +1,456 @@
+#Prediction 3-GRU
+#Importing Libraries  
+import numpy as np
+import ta
+import pandas as pd
+from tensorflow.keras import regularizers
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import  GRU
+import matplotlib.pyplot as plt
+from sklearn import metrics
+from sklearn.preprocessing import StandardScaler
+
+#Reading the dataset
+df = pd.read_csv('/content/drive/My Drive/Thesis/NBL.csv')
+df = df.dropna()
+df = df[['Open','High','Low','Close','Volume']]
+obj=ta.trend.MACD(close=df['Close'],window_slow=26,window_fast=12,window_sign=9,fillna=False)
+macd=obj.macd()
+df['MACD']=macd
+smacd=obj.macd_signal()
+df['MACD Signal']=smacd
+diff=obj.macd_diff()
+df['MACD Hist']=diff
+obj=ta.trend.KSTIndicator(close=df['Close'],roc1=10,roc2=15,roc3=20,roc4=30,window1=10,window2=10,window3=10,window4=15,nsig=9,fillna=False)
+kst=obj.kst()
+kdif=obj.kst_diff()
+ksig=obj.kst_sig()
+df['KST']=kst
+df['KST Diff']=kdif
+df['KST Signal']=ksig
+obj=ta.trend.ADXIndicator(high=df['High'],low=df['Low'],close=df['Close'],window=14,fillna=False)
+adx=obj.adx()
+pdm=obj.adx_pos()
+ndm=obj.adx_neg()
+df['ADX']=adx
+df['PDI']=pdm
+df['NDI']=ndm
+df['Target Close']=df['Close'].shift(-1)
+df = df.dropna()
+
+#Prediction with MACD
+dataset=df[['Open','High','Low','Close','Volume','MACD','MACD Signal', 'MACD Hist','Target Close']]
+split = int(len(dataset)*0.8)
+train, test = dataset[:split], dataset[split:]
+split = int(len(test)*0.5)
+validate,test=test[:split], test[split:]
+
+#Feature Scaling
+
+trainsc = StandardScaler()
+testsc = StandardScaler()
+valsc = StandardScaler()
+
+train=train.values
+test=test.values
+validate=validate.values
+
+train=trainsc.fit_transform(train)
+test = testsc.fit_transform(test)
+validate = valsc.fit_transform(validate)
+
+end=0
+nsteps = 20
+xtrain, ytrain = list(), list()
+for i in range(len(train)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(train):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = train[i:end, 0:8], train[end-1, -1]
+		xtrain.append(seqx)
+		ytrain.append(seqy)
+xtrn=np.array(xtrain)
+ytrn=np.array(ytrain)
+
+end=0
+xval, yval = list(), list()
+for i in range(len(validate)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(validate):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = validate[i:end, 0:8], validate[end-1, -1]
+		xval.append(seqx)
+		yval.append(seqy)
+xval=np.array(xval)
+yval=np.array(yval)
+
+end=0
+xtest, ytest = list(), list()
+for i in range(len(test)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(test):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = test[i:end, 0:8], test[end-1, -1]
+		xtest.append(seqx)
+		ytest.append(seqy)
+xtst=np.array(xtest)
+ytst=np.array(ytest)
+
+nfeatures = xtrn.shape[2]
+EP=50
+
+nn=128
+trms=0
+tme=0
+tpe=0
+lamda=0.00005
+for i in range(5):
+  grumacd = Sequential()
+  grumacd.add(GRU(units = nn, return_sequences = True, kernel_regularizer=regularizers.l2(lamda), input_shape = (nsteps, nfeatures)))
+  grumacd.add(GRU(units = nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  grumacd.add(GRU(units = nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  grumacd.add(GRU(units =nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  grumacd.add(GRU(units =nn))
+  grumacd.add(Dense(units = 1))
+  grumacd.compile(optimizer = 'adam', loss = 'mse')
+  gruhist=grumacd.fit(xtrn, ytrn, epochs = EP, batch_size = 32, validation_data=(xval,yval), verbose=False)
+  gyhat=grumacd.predict(xtst, verbose=0)
+  yhat=gyhat.ravel()
+  yhat=(yhat*np.sqrt(testsc.var_[8]))+testsc.mean_[8]
+  yhat_macd=yhat
+  yact=(ytst*np.sqrt(testsc.var_[8]))+testsc.mean_[8]
+  
+  ms=metrics.mean_squared_error(yact,yhat)
+  rms=np.sqrt(ms)
+  trms=trms+rms  
+  pe=metrics.mean_absolute_percentage_error(yact,yhat)
+  tpe=tpe+pe  
+  me=metrics.mean_absolute_error(yact,yhat)
+  tme=tme+me 
+arms=trms/5
+ape=tpe/5
+ame=tme/5
+print("Average RMSE(MACD):",arms)
+print("Average MAPE(MACD):",ape)
+print("Average MAE(MACD):",ame)
+
+#Prediction with KST
+dataset=df[['Open','High','Low','Close','Volume','KST','KST Diff', 'KST Signal','Target Close']]
+split = int(len(dataset)*0.8)
+train, test = dataset[:split], dataset[split:]
+split = int(len(test)*0.5)
+validate,test=test[:split], test[split:]
+
+#Feature Scaling
+trainsc = StandardScaler()
+testsc = StandardScaler()
+valsc = StandardScaler()
+
+train=train.values
+test=test.values
+validate=validate.values
+
+train=trainsc.fit_transform(train)
+test = testsc.fit_transform(test)
+validate = valsc.fit_transform(validate)
+
+end=0
+xtrain, ytrain = list(), list()
+for i in range(len(train)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(train):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = train[i:end, 0:8], train[end-1, -1]
+		xtrain.append(seqx)
+		ytrain.append(seqy)
+xtrn=np.array(xtrain)
+ytrn=np.array(ytrain)
+
+end=0
+xval, yval = list(), list()
+for i in range(len(validate)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(validate):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = validate[i:end, 0:8], validate[end-1, -1]
+		xval.append(seqx)
+		yval.append(seqy)
+xval=np.array(xval)
+yval=np.array(yval)
+
+end=0
+xtest, ytest = list(), list()
+for i in range(len(test)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(test):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = test[i:end, 0:8], test[end-1, -1]
+		xtest.append(seqx)
+		ytest.append(seqy)
+xtst=np.array(xtest)
+ytst=np.array(ytest)
+
+nfeatures = xtrn.shape[2]
+
+trms=0
+tme=0
+tpe=0
+for i in range(5):
+  grukst = Sequential()
+  grukst.add(GRU(units = nn, return_sequences = True, kernel_regularizer=regularizers.l2(lamda), input_shape = (nsteps, nfeatures)))
+  grukst.add(GRU(units = nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  grukst.add(GRU(units = nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  grukst.add(GRU(units =nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  grukst.add(GRU(units =nn))
+  grukst.add(Dense(units = 1))
+  grukst.compile(optimizer = 'adam', loss = 'mse')
+  gruhist=grukst.fit(xtrn, ytrn, epochs = EP, batch_size = 32, validation_data=(xval,yval), verbose=False)
+  gyhat=grukst.predict(xtst, verbose=0)
+  yhat=gyhat.ravel()
+  yhat=(yhat*np.sqrt(testsc.var_[8]))+testsc.mean_[8]
+  yhat_kst=yhat
+  yact=(ytst*np.sqrt(testsc.var_[8]))+testsc.mean_[8]
+  
+  ms=metrics.mean_squared_error(yact,yhat)
+  rms=np.sqrt(ms)
+  trms=trms+rms  
+  pe=metrics.mean_absolute_percentage_error(yact,yhat)
+  tpe=tpe+pe  
+  me=metrics.mean_absolute_error(yact,yhat)
+  tme=tme+me 
+arms=trms/5
+ape=tpe/5
+ame=tme/5
+print("Average RMSE(KST):",arms)
+print("Average MAPE(KST):",ape)
+print("Average MAE(KST):",ame)
+
+
+#Prediction with ADX
+dataset=df[['Open','High','Low','Close','Volume','ADX','PDI', 'NDI','Target Close']]
+split = int(len(dataset)*0.8)
+train, test = dataset[:split], dataset[split:]
+split = int(len(test)*0.5)
+validate,test=test[:split], test[split:]
+
+#Feature Scaling
+trainsc = StandardScaler()
+testsc = StandardScaler()
+valsc = StandardScaler()
+
+train=train.values
+test=test.values
+validate=validate.values
+
+train=trainsc.fit_transform(train)
+test = testsc.fit_transform(test)
+validate = valsc.fit_transform(validate)
+
+end=0
+xtrain, ytrain = list(), list()
+for i in range(len(train)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(train):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = train[i:end, 0:8], train[end-1, -1]
+		xtrain.append(seqx)
+		ytrain.append(seqy)
+xtrn=np.array(xtrain)
+ytrn=np.array(ytrain)
+
+end=0
+xval, yval = list(), list()
+for i in range(len(validate)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(validate):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = validate[i:end, 0:8], validate[end-1, -1]
+		xval.append(seqx)
+		yval.append(seqy)
+xval=np.array(xval)
+yval=np.array(yval)
+
+end=0
+xtest, ytest = list(), list()
+for i in range(len(test)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(test):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = test[i:end, 0:8], test[end-1, -1]
+		xtest.append(seqx)
+		ytest.append(seqy)
+xtst=np.array(xtest)
+ytst=np.array(ytest)
+
+nfeatures = xtrn.shape[2]
+
+trms=0
+tme=0
+tpe=0
+for i in range(5):
+  gruadx = Sequential()
+  gruadx.add(GRU(units = nn, return_sequences = True, kernel_regularizer=regularizers.l2(lamda), input_shape = (nsteps, nfeatures)))
+  gruadx.add(GRU(units = nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  gruadx.add(GRU(units = nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  gruadx.add(GRU(units =nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  gruadx.add(GRU(units =nn))
+  gruadx.add(Dense(units = 1))
+  gruadx.compile(optimizer = 'adam', loss = 'mse')
+  gruhist=gruadx.fit(xtrn, ytrn, epochs = EP, batch_size = 32, validation_data=(xval,yval), verbose=False)
+  gyhat=gruadx.predict(xtst, verbose=0)
+  yhat=gyhat.ravel()
+  yhat=(yhat*np.sqrt(testsc.var_[8]))+testsc.mean_[8]
+  yhat_adx=yhat
+  yact=(ytst*np.sqrt(testsc.var_[8]))+testsc.mean_[8]
+  
+  ms=metrics.mean_squared_error(yact,yhat)
+  rms=np.sqrt(ms)
+  trms=trms+rms  
+  pe=metrics.mean_absolute_percentage_error(yact,yhat)
+  tpe=tpe+pe  
+  me=metrics.mean_absolute_error(yact,yhat)
+  tme=tme+me 
+arms=trms/5
+ape=tpe/5
+ame=tme/5
+print("Average RMSE(ADX):",arms)
+print("Average MAPE(ADX):",ape)
+print("Average MAE(ADX):",ame)
+
+#Prediction with 3-GRU
+yhat=(yhat_macd+yhat_kst+yhat_adx)/3
+ms=metrics.mean_squared_error(yact,yhat)
+rms=np.sqrt(ms)
+pe=metrics.mean_absolute_percentage_error(yact,yhat)
+me=metrics.mean_absolute_error(yact,yhat)
+print("Average RMSE(3-GRU):",rms)
+print("Average MAPE(3-GRU):",pe)
+print("Average MAE(3-GRU):",me)
+
+#Prediction with GRU-ALL
+dataset=df[['Open','High','Low','Close','Volume','MACD','MACD Signal','MACD Hist','KST','KST Diff','KST Signal','ADX','PDI','NDI','Target Close']]
+split = int(len(dataset)*0.8)
+train, test = dataset[:split], dataset[split:]
+split = int(len(test)*0.5)
+validate,test=test[:split], test[split:]
+
+#Feature Scaling
+trainsc = StandardScaler()
+testsc = StandardScaler()
+valsc = StandardScaler()
+
+train=train.values
+test=test.values
+validate=validate.values
+
+train=trainsc.fit_transform(train)
+test = testsc.fit_transform(test)
+validate = valsc.fit_transform(validate)
+
+end=0
+xtrain, ytrain = list(), list()
+for i in range(len(train)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(train):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = train[i:end, 0:14], train[end-1, -1]
+		xtrain.append(seqx)
+		ytrain.append(seqy)
+xtrn=np.array(xtrain)
+ytrn=np.array(ytrain)
+
+end=0
+xval, yval = list(), list()
+for i in range(len(validate)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(validate):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = validate[i:end, 0:14], validate[end-1, -1]
+		xval.append(seqx)
+		yval.append(seqy)
+xval=np.array(xval)
+yval=np.array(yval)
+
+end=0
+xtest, ytest = list(), list()
+for i in range(len(test)):
+		# find the end of this pattern
+		end = i + nsteps
+		# check if we are beyond the dataset
+		if end > len(test):
+			break
+		# gather input and output parts of the pattern
+		seqx, seqy = test[i:end, 0:14], test[end-1, -1]
+		xtest.append(seqx)
+		ytest.append(seqy)
+xtst=np.array(xtest)
+ytst=np.array(ytest)
+
+nfeatures = xtrn.shape[2]
+
+trms=0
+tme=0
+tpe=0
+for i in range(5):
+  gruadx = Sequential()
+  gruadx.add(GRU(units = nn, return_sequences = True, kernel_regularizer=regularizers.l2(lamda), input_shape = (nsteps, nfeatures)))
+  gruadx.add(GRU(units = nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  gruadx.add(GRU(units = nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  gruadx.add(GRU(units =nn, return_sequences = True,kernel_regularizer=regularizers.l2(lamda)))
+  gruadx.add(GRU(units =nn))
+  gruadx.add(Dense(units = 1))
+  gruadx.compile(optimizer = 'adam', loss = 'mse')
+  gruhist=gruadx.fit(xtrn, ytrn, epochs = EP, batch_size = 32, validation_data=(xval,yval), verbose=False)
+  gyhat=gruadx.predict(xtst, verbose=0)
+  yhat=gyhat.ravel()
+  yhat=(yhat*np.sqrt(testsc.var_[14]))+testsc.mean_[14]
+  yhat_adx=yhat
+  yact=(ytst*np.sqrt(testsc.var_[14]))+testsc.mean_[14]
+  
+  ms=metrics.mean_squared_error(yact,yhat)
+  rms=np.sqrt(ms)
+  trms=trms+rms  
+  pe=metrics.mean_absolute_percentage_error(yact,yhat)
+  tpe=tpe+pe  
+  me=metrics.mean_absolute_error(yact,yhat)
+  tme=tme+me 
+arms=trms/5
+ape=tpe/5
+ame=tme/5
+print("Average RMSE(GRU-ALL):",arms)
+print("Average MAPE(GRU-ALL):",ape)
+print("Average MAE(GRU-ALL):",ame)
